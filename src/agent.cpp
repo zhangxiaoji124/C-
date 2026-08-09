@@ -7,6 +7,7 @@
 #include <iomanip>
 #include <sstream>
 #include <stdexcept>
+#include <utility>
 
 namespace orbit {
 
@@ -39,7 +40,12 @@ std::string compact_goal(const std::string& goal) {
 
 } // namespace
 
-AgentWorkflow::AgentWorkflow(Database& database) : database_(database) {}
+AgentWorkflow::AgentWorkflow(Database& database, OllamaConfig config)
+    : database_(database), ollama_(std::move(config)) {}
+
+json AgentWorkflow::provider_status() const {
+    return ollama_.status();
+}
 
 json AgentWorkflow::observe(int project_id) {
     const json project = database_.get_project(project_id);
@@ -82,7 +88,7 @@ json AgentWorkflow::observe(int project_id) {
     return context;
 }
 
-json AgentWorkflow::plan(const json& context, const std::string& goal) {
+json AgentWorkflow::rule_plan(const json& context, const std::string& goal) const {
     json result = {
         {"intent", "项目健康度分析与行动编排"},
         {"summary", "已结合项目进度、截止日期、优先级和人员分配生成执行计划。"},
@@ -148,7 +154,86 @@ json AgentWorkflow::plan(const json& context, const std::string& goal) {
         });
     }
     result["action_count"] = result["actions"].size();
+    result["provider"] = {{"type", "rules"}, {"model", "orbit-rules-v1"}};
     return result;
+}
+
+json AgentWorkflow::validate_plan(const json& candidate, const json& context) const {
+    if (!candidate.is_object() || !candidate.contains("actions") || !candidate["actions"].is_array()) {
+        throw std::runtime_error("Ollama plan has an invalid structure");
+    }
+    json result = {
+        {"intent", "本地大模型项目规划"},
+        {"summary", candidate.value("summary", "Ollama 已根据实时项目上下文生成执行计划。")},
+        {"insights", json::array()}, {"actions", json::array()},
+        {"provider", candidate.value("provider", json{{"type", "ollama"}})}
+    };
+    if (candidate.contains("insights") && candidate["insights"].is_array()) {
+        for (const auto& insight : candidate["insights"]) {
+            if (insight.is_string() && result["insights"].size() < 5) result["insights"].push_back(insight);
+        }
+    }
+
+    std::vector<int> valid_task_ids;
+    for (const auto& task : context["tasks"]) valid_task_ids.push_back(task["id"].get<int>());
+    const int project_id = context["project"]["id"].get<int>();
+    const std::vector<std::string> priorities = {"low", "medium", "high", "urgent"};
+    const std::vector<std::string> create_statuses = {"todo", "in_progress"};
+    const std::vector<std::string> update_statuses = {"todo", "in_progress", "review"};
+    auto allowed = [](const std::string& value, const std::vector<std::string>& values) {
+        return std::find(values.begin(), values.end(), value) != values.end();
+    };
+
+    for (const auto& action : candidate["actions"]) {
+        if (!action.is_object() || !action.contains("args") || !action["args"].is_object() ||
+            !action.contains("tool") || !action["tool"].is_string() || result["actions"].size() >= 6) continue;
+        const std::string tool = action["tool"].get<std::string>();
+        const json& source = action["args"];
+        const std::string reason = action.value("reason", "由本地模型根据项目上下文生成");
+        if (tool == "create_task") {
+            const std::string title = source.value("title", "");
+            if (title.empty()) continue;
+            const std::string priority = source.value("priority", "medium");
+            const std::string status = source.value("status", "todo");
+            const double hours = std::clamp(source.value("estimate_hours", 2.0), 0.0, 80.0);
+            result["actions"].push_back({
+                {"tool", "create_task"}, {"reason", reason},
+                {"args", {
+                    {"project_id", project_id}, {"title", title},
+                    {"description", source.value("description", "由本地 Ollama 结合项目上下文生成。")},
+                    {"priority", allowed(priority, priorities) ? priority : "medium"},
+                    {"status", allowed(status, create_statuses) ? status : "todo"},
+                    {"assignee", "未分配"}, {"estimate_hours", hours},
+                    {"tags", json::array({"Ollama 生成"})}
+                }}
+            });
+        } else if (tool == "update_task" && source.contains("task_id") && source["task_id"].is_number_integer()) {
+            const int task_id = source["task_id"].get<int>();
+            if (std::find(valid_task_ids.begin(), valid_task_ids.end(), task_id) == valid_task_ids.end()) continue;
+            json args = {{"task_id", task_id}};
+            if (source.contains("priority") && source["priority"].is_string() &&
+                allowed(source["priority"].get<std::string>(), priorities)) args["priority"] = source["priority"];
+            if (source.contains("status") && source["status"].is_string() &&
+                allowed(source["status"].get<std::string>(), update_statuses)) args["status"] = source["status"];
+            if (args.size() > 1) result["actions"].push_back({{"tool", "update_task"}, {"args", args}, {"reason", reason}});
+        }
+    }
+    result["action_count"] = result["actions"].size();
+    return result;
+}
+
+json AgentWorkflow::plan(const json& context, const std::string& goal) {
+    if (ollama_.config().enabled) {
+        try {
+            return validate_plan(ollama_.generate_plan(context, goal), context);
+        } catch (const std::exception& error) {
+            if (!ollama_.config().fallback_to_rules) throw;
+            json fallback = rule_plan(context, goal);
+            fallback["provider"]["fallback_reason"] = error.what();
+            return fallback;
+        }
+    }
+    return rule_plan(context, goal);
 }
 
 json AgentWorkflow::execute(int, int, const json& plan_data, const std::string& mode) {
@@ -213,7 +298,8 @@ json AgentWorkflow::run(int run_id, int project_id, const std::string& goal, con
 
         json output = {
             {"summary", plan_data["summary"]}, {"insights", plan_data["insights"]},
-            {"plan", plan_data["actions"]}, {"execution", execution}, {"verification", verification}
+            {"plan", plan_data["actions"]}, {"provider", plan_data.value("provider", json::object())},
+            {"execution", execution}, {"verification", verification}
         };
         database_.update_agent_run(run_id, verification["passed"].get<bool>() ? "completed" : "failed", output);
         return output;

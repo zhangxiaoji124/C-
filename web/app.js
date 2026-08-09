@@ -174,7 +174,10 @@ function taskCard(task) {
 
 async function loadAgent() {
   if (!state.projects.length) await loadProjects();
-  const runs = await api('/api/agent/runs?limit=12');
+  const [runs, provider] = await Promise.all([api('/api/agent/runs?limit=12'), api('/api/agent/provider')]);
+  const badge = $('#providerBadge');
+  badge.classList.toggle('offline', !provider.available || !provider.model_available);
+  badge.innerHTML = `<i></i>${provider.available && provider.model_available ? `Ollama 在线 · ${escapeHtml(provider.model)}` : 'Ollama 不可用 · 自动降级规则引擎'}`;
   renderRuns(runs);
 }
 
@@ -201,7 +204,7 @@ async function showRun(id, poll = false) {
     $('#agentResult').classList.remove('hidden');
     $('#agentResult').innerHTML = run.status === 'failed'
       ? `<h4>执行未完成</h4><p>${escapeHtml(output.error || 'Worker 处理失败')}</p>`
-      : `<h4>Agent 结论</h4><p>${escapeHtml(output.summary || '工作流执行完成')}</p>${(output.insights || []).length ? `<ul>${output.insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}<p>已执行 ${output.execution?.applied_count || 0} 个操作，验证${output.verification?.passed ? '通过' : '未通过'}。</p>`;
+      : `<h4>Agent 结论</h4><p>${escapeHtml(output.summary || '工作流执行完成')}</p>${(output.insights || []).length ? `<ul>${output.insights.map(item => `<li>${escapeHtml(item)}</li>`).join('')}</ul>` : ''}<p>已执行 ${output.execution?.applied_count || 0} 个操作，验证${output.verification?.passed ? '通过' : '未通过'}。${output.provider?.type === 'ollama' ? ` 本次由本地 ${escapeHtml(output.provider.model)} 推理，耗时 ${Math.round(output.provider.total_duration_ms || 0)} ms。` : ' 本次使用规则引擎。'}</p>`;
     if (poll) { await loadAgent(); if (run.mode === 'execute') await loadProjects(); }
   } else {
     $('#agentResult').classList.add('hidden');

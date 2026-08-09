@@ -49,7 +49,7 @@ def main() -> int:
             pass
 
     # Keep process arguments relative so the same test also covers non-ASCII workspaces on MinGW.
-    common = ["--db", "build/orbitops-e2e.db", "--web", "web"]
+    common = ["--db", "build/orbitops-e2e.db", "--web", "web", "--no-ollama"]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     api_process = subprocess.Popen([str(EXE), "--role", "api", "--node-id", "e2e-api", "--port", str(PORT), *common],
                                    cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=flags)

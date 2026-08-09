@@ -7,7 +7,8 @@
 ## 核心能力
 
 - 完整业务闭环：项目与任务 CRUD、筛选、看板拖拽、优先级、进度和活动日志
-- 可解释 AI Agent：`Intake → Observe → Plan → Act → Verify` 五阶段工作流
+- 本地大模型 Agent：Ollama + `qwen3:8b` 结构化规划，完整数据留在本机
+- 可解释工作流：`Intake → Observe → Plan → Act → Verify` 五阶段全程留痕
 - 分布式执行：API/Worker 角色分离、SQLite WAL 持久化队列、任务租约、超时接管、指数退避与最多三次重试
 - 一致性保护：请求幂等键、任务去重键、白名单工具调用、执行后数据校验
 - 可观测性：节点注册与心跳、队列状态、Agent 步骤留痕、`/metrics` Prometheus 指标
@@ -63,6 +64,24 @@ cmake --build build --parallel
 
 首次运行会自动创建 `data/orbitops.db`、执行数据库迁移并写入演示数据。
 
+### 启用本地 Ollama
+
+安装并启动 [Ollama](https://ollama.com/)，准备默认模型：
+
+```bash
+ollama pull qwen3:8b
+ollama serve
+```
+
+OrbitOps 默认连接 `http://127.0.0.1:11434`。Agent 页面会显示模型在线状态。可通过环境变量切换模型：
+
+```powershell
+$env:ORBITOPS_OLLAMA_MODEL='llama3.2:3b'
+.\scripts\run.ps1
+```
+
+Ollama 不可用时系统会自动降级到规则规划器；使用 `--ollama-required` 可以关闭降级，让模型错误直接反映在工作流结果中。
+
 ## 分布式运行
 
 在不同终端启动 API 和多个 Worker。它们共享同一个数据库文件：
@@ -90,11 +109,11 @@ docker compose up --build
 
 1. **Intake**：理解目标，确定 `preview` 或 `execute` 安全边界。
 2. **Observe**：读取项目、任务、截止日期、工作量与负责人等实时上下文。
-3. **Plan**：识别逾期、未分配、评审堆积等信号，生成带理由的工具调用计划。
+3. **Plan**：把实时上下文交给本地 Ollama，使用 JSON Schema 约束模型输出，生成带理由的结构化工具计划。
 4. **Act**：预览模式不写数据；执行模式只允许调用已注册的任务创建/更新工具。
 5. **Verify**：重新读取数据库，核对工具结果与项目数据一致性。
 
-内置 Agent 是确定性、离线可运行的，因此测试稳定且无需付费 API。`AgentWorkflow` 的规划阶段可以进一步接入 Ollama 或任意 OpenAI-compatible 模型，而执行工具和验证边界仍由 C++ 服务控制。
+模型输出不会直接执行：C++ 会过滤未知工具、校验任务 ID、限制动作数量、移除危险字段，并禁止模型将任务直接标记为完成。Ollama 不可用时会降级到确定性规则规划器，因此系统依然可以离线运行且无需付费 API。
 
 ## API 概览
 
@@ -108,6 +127,7 @@ docker compose up --build
 | `GET/PATCH/DELETE` | `/api/tasks/{id}` | 任务详情、更新、删除 |
 | `POST` | `/api/agent/runs` | 异步提交 Agent 工作流 |
 | `GET` | `/api/agent/runs/{id}` | 查询工作流和步骤 |
+| `GET` | `/api/agent/provider` | Ollama 与模型在线状态 |
 | `GET` | `/api/cluster` | 节点与队列状态 |
 | `GET` | `/metrics` | Prometheus 文本指标 |
 
@@ -126,10 +146,11 @@ curl -X POST http://127.0.0.1:8080/api/agent/runs \
 .\scripts\test.ps1
 ```
 
-测试分为两层：
+测试分为三层：
 
-- `orbitops_tests`：19 项数据层、Agent、幂等、队列租约与节点发现断言。
+- `orbitops_tests`：20 项数据层、Agent、Provider 配置、幂等、队列租约与节点发现断言。
 - `tests/e2e_test.py`：启动独立 API/Worker 进程，验证 Web、REST、幂等请求、持久化队列、Agent 执行、集群发现和监控指标，共 13 项断言。
+- `tests/ollama_integration_test.py`：如果本机存在 `qwen3:8b`，启动独立服务并验证真实模型推理、结构化计划、安全工具执行与 Token/耗时指标；没有模型时自动跳过。
 
 ## 项目结构
 

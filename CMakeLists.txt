@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OrbitOps VERSION 1.0.0 LANGUAGES C CXX)
+project(OrbitOps VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -13,6 +13,7 @@ endif()
 
 add_library(orbit_core
   src/database.cpp
+  src/ollama_client.cpp
   src/agent.cpp
   src/worker.cpp
   src/http_server.cpp

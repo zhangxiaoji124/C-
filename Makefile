@@ -12,7 +12,7 @@ else
   LDLIBS := -pthread -ldl
 endif
 
-CORE_SOURCES := src/database.cpp src/agent.cpp src/worker.cpp src/http_server.cpp
+CORE_SOURCES := src/database.cpp src/ollama_client.cpp src/agent.cpp src/worker.cpp src/http_server.cpp
 CORE_OBJECTS := $(CORE_SOURCES:src/%.cpp=$(BUILD_DIR)/%.o)
 
 .PHONY: all clean test run
@@ -34,7 +34,7 @@ $(BUILD_DIR)/orbitops$(EXE): $(BUILD_DIR)/main.o $(CORE_OBJECTS) $(BUILD_DIR)/sq
 $(BUILD_DIR)/unit_tests.o: tests/unit_tests.cpp | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-$(BUILD_DIR)/orbitops_tests$(EXE): $(BUILD_DIR)/unit_tests.o $(BUILD_DIR)/database.o $(BUILD_DIR)/agent.o $(BUILD_DIR)/sqlite3.o
+$(BUILD_DIR)/orbitops_tests$(EXE): $(BUILD_DIR)/unit_tests.o $(BUILD_DIR)/database.o $(BUILD_DIR)/ollama_client.o $(BUILD_DIR)/agent.o $(BUILD_DIR)/sqlite3.o
 	$(CXX) $^ -o $@ $(LDLIBS)
 
 test: all

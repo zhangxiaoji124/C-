@@ -74,13 +74,16 @@ bool HttpServer::listen(const std::string& host, int port) {
     });
 
     server.Get("/api/health", [&](const httplib::Request&, httplib::Response& response) {
-        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.0.0"}});
+        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.1.0"}});
     });
     server.Get("/api/dashboard", [&](const httplib::Request&, httplib::Response& response) {
         send_json(response, database_.dashboard());
     });
     server.Get("/api/cluster", [&](const httplib::Request&, httplib::Response& response) {
         send_json(response, database_.cluster_status());
+    });
+    server.Get("/api/agent/provider", [&](const httplib::Request&, httplib::Response& response) {
+        send_json(response, agent_.provider_status());
     });
     server.Get("/metrics", [&](const httplib::Request&, httplib::Response& response) {
         const json dashboard = database_.dashboard();

@@ -46,7 +46,10 @@ int main() {
         const int preview_run = db.create_agent_run(project_id, "分析风险", "preview", "unit-preview");
         expect(db.create_agent_run(project_id, "不会重复", "preview", "unit-preview") == preview_run,
                "agent idempotency key returns existing run");
-        orbit::AgentWorkflow agent(db);
+        orbit::OllamaConfig offline;
+        offline.enabled = false;
+        orbit::AgentWorkflow agent(db, offline);
+        expect(!agent.provider_status()["enabled"].get<bool>(), "rule-only provider can be selected");
         const auto preview = agent.run(preview_run, project_id, "分析风险", "preview");
         expect(preview["verification"]["passed"], "preview workflow verifies result");
         expect(db.get_agent_run(preview_run)["steps"].size() == 5, "workflow records five stages");

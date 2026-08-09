@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <csignal>
 #include <cstdlib>
 #include <filesystem>
@@ -31,6 +32,12 @@ std::string env_or(const char* name, const std::string& fallback) {
     return value && *value ? value : fallback;
 }
 
+bool env_bool(const char* name, bool fallback) {
+    std::string value = env_or(name, fallback ? "true" : "false");
+    for (char& c : value) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return value == "1" || value == "true" || value == "yes" || value == "on";
+}
+
 int process_id() {
 #ifdef _WIN32
     return _getpid();
@@ -45,11 +52,18 @@ struct Config {
     int port = std::stoi(env_or("ORBITOPS_PORT", "8080"));
     std::filesystem::path database = env_or("ORBITOPS_DB", "data/orbitops.db");
     std::filesystem::path web = env_or("ORBITOPS_WEB", "web");
+    orbit::OllamaConfig ollama = {
+        env_bool("ORBITOPS_OLLAMA_ENABLED", true),
+        env_or("ORBITOPS_OLLAMA_URL", "http://127.0.0.1:11434"),
+        env_or("ORBITOPS_OLLAMA_MODEL", "qwen3:8b"),
+        std::stoi(env_or("ORBITOPS_OLLAMA_TIMEOUT", "120")),
+        env_bool("ORBITOPS_OLLAMA_FALLBACK", true)
+    };
     std::string node_id = env_or("COMPUTERNAME", env_or("HOSTNAME", "node")) + "-" + std::to_string(process_id());
 };
 
 void print_help() {
-    std::cout << R"HELP(OrbitOps 1.0 - distributed AI project operations platform
+    std::cout << R"HELP(OrbitOps 1.1 - distributed local-AI project operations platform
 
 Usage: orbitops [options]
   --role <all|api|worker>  Process role (default: all)
@@ -58,6 +72,10 @@ Usage: orbitops [options]
   --db <path>              SQLite database path
   --web <path>             Static web directory
   --node-id <id>           Cluster node identity
+  --ollama-url <url>       Local Ollama base URL
+  --ollama-model <name>    Ollama model (default: qwen3:8b)
+  --no-ollama              Disable model inference and use rules
+  --ollama-required        Fail workflow instead of rule fallback
   --help                   Show this help
 )HELP";
 }
@@ -76,6 +94,10 @@ Config parse_args(int argc, char** argv) {
         else if (arg == "--db") config.database = next();
         else if (arg == "--web") config.web = next();
         else if (arg == "--node-id") config.node_id = next();
+        else if (arg == "--ollama-url") config.ollama.base_url = next();
+        else if (arg == "--ollama-model") config.ollama.model = next();
+        else if (arg == "--no-ollama") config.ollama.enabled = false;
+        else if (arg == "--ollama-required") config.ollama.fallback_to_rules = false;
         else if (arg == "--help" || arg == "-h") { print_help(); std::exit(0); }
         else throw std::invalid_argument("Unknown option: " + arg);
     }
@@ -97,7 +119,7 @@ int main(int argc, char** argv) {
         orbit::Database database(config.database);
         database.migrate();
         database.seed_if_empty();
-        orbit::AgentWorkflow agent(database);
+        orbit::AgentWorkflow agent(database, config.ollama);
 
         if (config.role == "worker") {
             orbit::AgentWorker worker(database, agent, config.node_id);
@@ -118,7 +140,9 @@ int main(int argc, char** argv) {
             const std::string node = config.node_id + "-api";
             while (!stop_requested.load()) {
                 database.heartbeat_node(node, "api", config.host + ":" + std::to_string(config.port),
-                                        {{"version", "1.0.0"}, {"role", config.role}});
+                                        {{"version", "1.1.0"}, {"role", config.role},
+                                         {"agent_provider", config.ollama.enabled ? "ollama" : "rules"},
+                                         {"agent_model", config.ollama.model}});
                 for (int i = 0; i < 50 && !stop_requested.load(); ++i) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(100));
                 }
