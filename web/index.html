@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="OrbitOps — 分布式 AI 项目运营台">
+  <title>OrbitOps · 智能项目运营台</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <a class="brand" href="#dashboard" aria-label="OrbitOps 首页">
+        <span class="brand-mark">O</span>
+        <span><strong>OrbitOps</strong><small>AI PROJECT OS</small></span>
+      </a>
+      <nav>
+        <button class="nav-item active" data-view="dashboard"><span>◫</span>总览</button>
+        <button class="nav-item" data-view="projects"><span>◇</span>项目</button>
+        <button class="nav-item" data-view="board"><span>▦</span>任务看板</button>
+        <button class="nav-item agent-nav" data-view="agent"><span>✦</span>Orbit Agent <i>AI</i></button>
+        <button class="nav-item" data-view="cluster"><span>⌘</span>集群状态</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="system-chip"><span class="pulse"></span><div><b>系统在线</b><small>API 与队列正常</small></div></div>
+        <p>OrbitOps v1.0</p>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <button class="mobile-menu" id="mobileMenu" aria-label="展开导航">☰</button>
+        <div>
+          <p class="eyebrow" id="pageEyebrow">WORKSPACE OVERVIEW</p>
+          <h1 id="pageTitle">早上好，欢迎回来</h1>
+        </div>
+        <div class="top-actions">
+          <span class="date-chip" id="today"></span>
+          <button class="icon-button" id="refreshButton" aria-label="刷新数据">↻</button>
+          <button class="primary-button" id="quickAdd">＋ 新建任务</button>
+        </div>
+      </header>
+
+      <section class="view active" id="view-dashboard">
+        <div class="hero-grid">
+          <article class="hero-card">
+            <div>
+              <span class="section-kicker">WEEKLY PULSE</span>
+              <h2>让团队始终聚焦<br><em>真正重要的事。</em></h2>
+              <p id="heroSummary">正在读取工作区状态…</p>
+              <button class="ghost-light" data-go="agent">让 Agent 分析项目 <span>→</span></button>
+            </div>
+            <div class="orbit-art" aria-hidden="true">
+              <span class="orb orb-one"></span><span class="orb orb-two"></span><span class="orb orb-three"></span>
+              <div class="score-ring"><strong id="completionScore">0%</strong><small>整体完成</small></div>
+            </div>
+          </article>
+          <article class="focus-card">
+            <div class="card-title"><div><span class="section-kicker coral">NEXT UP</span><h3>最近截止</h3></div><button data-go="board">查看全部</button></div>
+            <div id="upcomingList" class="upcoming-list skeleton-block"></div>
+          </article>
+        </div>
+
+        <div class="stats-grid" id="statsGrid">
+          <article class="stat-card"><span class="stat-icon violet">◇</span><div><small>进行中项目</small><strong id="statProjects">—</strong></div></article>
+          <article class="stat-card"><span class="stat-icon mint">✓</span><div><small>任务完成率</small><strong id="statCompletion">—</strong></div></article>
+          <article class="stat-card"><span class="stat-icon amber">↗</span><div><small>正在推进</small><strong id="statActive">—</strong></div></article>
+          <article class="stat-card"><span class="stat-icon coral">!</span><div><small>已逾期</small><strong id="statOverdue">—</strong></div></article>
+        </div>
+
+        <div class="content-grid">
+          <article class="panel projects-panel">
+            <div class="card-title"><div><span class="section-kicker">ACTIVE PROJECTS</span><h3>项目进展</h3></div><button data-go="projects">管理项目</button></div>
+            <div id="dashboardProjects" class="project-list"></div>
+          </article>
+          <article class="panel activity-panel">
+            <div class="card-title"><div><span class="section-kicker">LIVE FEED</span><h3>最近动态</h3></div><span class="live-label"><i></i>LIVE</span></div>
+            <div id="activityList" class="activity-list"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="view" id="view-projects">
+        <div class="section-toolbar">
+          <div><h2>所有项目</h2><p>按目标组织工作，实时追踪交付节奏。</p></div>
+          <button class="primary-button" id="newProject">＋ 新建项目</button>
+        </div>
+        <div class="project-card-grid" id="projectGrid"></div>
+      </section>
+
+      <section class="view" id="view-board">
+        <div class="section-toolbar">
+          <div><h2>任务看板</h2><p>拖动卡片即可更新状态，所有变更实时持久化。</p></div>
+          <div class="toolbar-actions"><select id="projectFilter" aria-label="筛选项目"><option value="">全部项目</option></select><button class="primary-button" id="boardAdd">＋ 添加任务</button></div>
+        </div>
+        <div class="kanban" id="kanban"></div>
+      </section>
+
+      <section class="view" id="view-agent">
+        <div class="agent-layout">
+          <div class="agent-main">
+            <div class="agent-heading"><span class="agent-spark">✦</span><div><span class="section-kicker">AUTONOMOUS WORKFLOW</span><h2>把目标交给 Orbit Agent</h2><p>Agent 会读取项目现状、识别风险、规划工具调用，并在执行后自动校验。</p></div></div>
+            <form class="agent-composer" id="agentForm">
+              <label for="agentProject">选择项目</label>
+              <select id="agentProject" required></select>
+              <label for="agentGoal">你希望 Agent 完成什么？</label>
+              <textarea id="agentGoal" rows="5" maxlength="1000" required placeholder="例如：为下一轮迭代制定计划，同时识别逾期风险并调整优先级"></textarea>
+              <div class="suggestions">
+                <button type="button" data-prompt="分析当前项目风险，找出需要优先处理的事项">分析项目风险</button>
+                <button type="button" data-prompt="为下一个两周迭代制定计划并拆解关键任务">规划下轮迭代</button>
+                <button type="button" data-prompt="检查工作负载与逾期任务，给出改进建议">检查工作负载</button>
+              </div>
+              <div class="agent-submit-row">
+                <label class="mode-toggle"><input type="checkbox" id="executeMode"><span></span>允许 Agent 写入任务</label>
+                <button class="agent-button" type="submit"><span>✦</span>启动工作流</button>
+              </div>
+            </form>
+            <article class="run-panel hidden" id="runPanel">
+              <div class="run-head"><div><span class="run-status" id="runStatus">排队中</span><h3 id="runGoal"></h3></div><span id="runId"></span></div>
+              <div class="workflow" id="workflow"></div>
+              <div class="agent-result hidden" id="agentResult"></div>
+            </article>
+          </div>
+          <aside class="agent-history">
+            <div class="card-title"><div><span class="section-kicker">RUN HISTORY</span><h3>最近运行</h3></div></div>
+            <div id="agentRuns" class="run-list"></div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="view" id="view-cluster">
+        <div class="section-toolbar"><div><h2>分布式集群</h2><p>查看 API、Worker 节点健康度与持久化任务队列。</p></div><span class="auto-refresh"><i></i>每 5 秒刷新</span></div>
+        <div class="queue-grid" id="queueStats"></div>
+        <article class="panel cluster-panel">
+          <div class="card-title"><div><span class="section-kicker">SERVICE DISCOVERY</span><h3>服务节点</h3></div></div>
+          <div class="node-table" id="nodeTable"></div>
+        </article>
+        <article class="architecture-note">
+          <span>⌘</span><div><h3>横向扩展就绪</h3><p>API 与 Worker 可独立部署。多个 Worker 通过数据库租约安全竞争任务，过期租约会被其他节点接管；请求幂等键与唯一任务键防止重复执行。</p></div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="taskDialog" class="modal">
+    <form method="dialog" id="taskForm">
+      <div class="modal-head"><div><span class="section-kicker">NEW TASK</span><h2>创建任务</h2></div><button value="cancel" aria-label="关闭">×</button></div>
+      <label>任务标题<input id="taskTitle" required maxlength="120" placeholder="清晰描述要完成的事项"></label>
+      <label>所属项目<select id="taskProject" required></select></label>
+      <div class="form-row"><label>优先级<select id="taskPriority"><option value="low">低</option><option value="medium" selected>中</option><option value="high">高</option><option value="urgent">紧急</option></select></label><label>负责人<input id="taskAssignee" placeholder="未分配"></label></div>
+      <div class="form-row"><label>截止日期<input id="taskDue" type="date"></label><label>预估工时<input id="taskHours" type="number" min="0" step="0.5" value="2"></label></div>
+      <label>任务说明<textarea id="taskDescription" rows="3" placeholder="补充验收标准或上下文"></textarea></label>
+      <div class="modal-actions"><button value="cancel" class="secondary-button">取消</button><button type="submit" value="default" class="primary-button">创建任务</button></div>
+    </form>
+  </dialog>
+
+  <dialog id="projectDialog" class="modal">
+    <form method="dialog" id="projectForm">
+      <div class="modal-head"><div><span class="section-kicker">NEW PROJECT</span><h2>创建项目</h2></div><button value="cancel" aria-label="关闭">×</button></div>
+      <label>项目名称<input id="projectName" required maxlength="80" placeholder="例如：第三季度增长实验"></label>
+      <label>项目简介<textarea id="projectDescription" rows="3" placeholder="这个项目要解决什么问题？"></textarea></label>
+      <div class="form-row"><label>截止日期<input id="projectDue" type="date"></label><label>主题颜色<select id="projectColor"><option value="#6C5CE7">星云紫</option><option value="#00B894">薄荷绿</option><option value="#E17055">珊瑚橙</option><option value="#0984E3">远空蓝</option></select></label></div>
+      <div class="modal-actions"><button value="cancel" class="secondary-button">取消</button><button type="submit" value="default" class="primary-button">创建项目</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status"></div>
+  <script src="/app.js" defer></script>
+</body>
+</html>

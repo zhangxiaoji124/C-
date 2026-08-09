@@ -1,0 +1,10 @@
+build/
+data/*.db
+data/*.db-*
+.env
+*.exe
+*.o
+*.obj
+.idea/
+.vscode/
+

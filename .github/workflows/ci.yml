@@ -1,0 +1,21 @@
+name: Build and test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release binaries
+        run: make -j"$(nproc)"
+      - name: Run C++ unit tests
+        run: ./build/orbitops_tests
+      - name: Run distributed end-to-end test
+        run: python3 tests/e2e_test.py
+      - name: Validate browser JavaScript
+        run: node --check web/app.js
+
