@@ -74,6 +74,27 @@ int main() {
         expect(cluster["nodes"].size() == 1, "service discovery stores heartbeat");
         expect(cluster["nodes"][0]["status"] == "online", "fresh node is online");
 
+        const int dev_run = db.create_dev_run("Build a tested CLI", "agent_workspace", "unit-dev-run");
+        expect(dev_run > 0, "developer run is created");
+        expect(db.create_dev_run("Must not duplicate", "other_workspace", "unit-dev-run") == dev_run,
+               "developer run idempotency key returns existing run");
+        db.mark_dev_run_running(dev_run);
+        db.add_dev_step(dev_run, 1, "observe", "completed", {{"round", 1}}, {{"file_count", 2}});
+        db.update_dev_run(dev_run, "completed", {{"success", true}, {"summary", "verified"}});
+        const auto persisted_dev_run = db.get_dev_run(dev_run);
+        expect(persisted_dev_run["status"] == "completed" && persisted_dev_run["steps"].size() == 1,
+               "developer run and timeline persist");
+        expect(persisted_dev_run["output"]["success"].get<bool>(), "developer output persists as JSON");
+
+        const int first_dev_job = db.enqueue_job("dev_run", {{"run_id", dev_run}}, 1, "unit-dev-job-1");
+        db.enqueue_job("dev_run", {{"run_id", dev_run + 1}}, 1, "unit-dev-job-2");
+        const auto claimed_dev_job = db.claim_job("dev-worker-a", 10);
+        expect(claimed_dev_job["id"] == first_dev_job, "a worker claims the first developer job");
+        expect(db.claim_job("dev-worker-b", 10).is_null(), "developer workspace is serialized across workers");
+        db.renew_job_lease(first_dev_job, "dev-worker-a", 30);
+        db.complete_job(first_dev_job, "dev-worker-a", {{"success", true}});
+        expect(!db.claim_job("dev-worker-b", 10).is_null(), "next developer job starts after workspace release");
+
         expect(db.delete_task(task_id), "task is deleted");
         std::cout << "All " << passed << " unit assertions passed.\n";
         return 0;

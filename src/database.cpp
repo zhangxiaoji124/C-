@@ -129,6 +129,26 @@ void Database::migrate() {
             started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
             last_heartbeat TEXT NOT NULL DEFAULT (datetime('now','localtime'))
         );
+        CREATE TABLE IF NOT EXISTS dev_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            goal TEXT NOT NULL,
+            workspace TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            idempotency_key TEXT,
+            output TEXT NOT NULL DEFAULT '{}',
+            started_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            completed_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS dev_steps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id INTEGER NOT NULL REFERENCES dev_runs(id) ON DELETE CASCADE,
+            sequence INTEGER NOT NULL,
+            stage TEXT NOT NULL,
+            status TEXT NOT NULL,
+            input TEXT NOT NULL DEFAULT '{}',
+            output TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+        );
         CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
         CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
         CREATE INDEX IF NOT EXISTS idx_tasks_due_date ON tasks(due_date);
@@ -137,6 +157,8 @@ void Database::migrate() {
         CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_runs_idempotency ON agent_runs(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
         CREATE INDEX IF NOT EXISTS idx_jobs_claim ON jobs(status, available_at, lease_until, id);
         CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_dedupe ON jobs(dedupe_key) WHERE dedupe_key IS NOT NULL AND dedupe_key != '';
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_dev_runs_idempotency ON dev_runs(idempotency_key) WHERE idempotency_key IS NOT NULL AND idempotency_key != '';
+        CREATE INDEX IF NOT EXISTS idx_dev_steps_run ON dev_steps(run_id, sequence);
     )SQL");
 }
 
@@ -483,6 +505,11 @@ json Database::claim_job(const std::string& worker_id, int lease_seconds) {
             SELECT * FROM jobs
             WHERE attempts < max_attempts AND available_at <= datetime('now','localtime')
               AND (status='queued' OR (status='processing' AND lease_until < datetime('now','localtime')))
+              AND (type != 'dev_run' OR NOT EXISTS (
+                SELECT 1 FROM jobs active
+                WHERE active.type='dev_run' AND active.status='processing'
+                  AND active.lease_until >= datetime('now','localtime')
+              ))
             ORDER BY id LIMIT 1
         )SQL");
         if (rows.empty()) {
@@ -504,6 +531,13 @@ json Database::claim_job(const std::string& worker_id, int lease_seconds) {
         execute("ROLLBACK;");
         throw;
     }
+}
+
+void Database::renew_job_lease(int job_id, const std::string& worker_id, int lease_seconds) {
+    change(R"SQL(
+        UPDATE jobs SET lease_until=datetime('now','localtime', ?),updated_at=datetime('now','localtime')
+        WHERE id=? AND worker_id=? AND status='processing'
+    )SQL", {"+" + std::to_string(std::max(5, lease_seconds)) + " seconds", job_id, worker_id});
 }
 
 void Database::complete_job(int job_id, const std::string& worker_id, const json& result) {
@@ -551,6 +585,60 @@ json Database::cluster_status() {
     for (const auto& row : jobs) result["queue"][row["status"].get<std::string>()] = row["count"];
     result["database"] = {{"engine", "SQLite WAL"}, {"status", "healthy"}};
     return result;
+}
+
+int Database::create_dev_run(const std::string& goal, const std::string& workspace,
+                             const std::string& idempotency_key) {
+    if (!idempotency_key.empty()) {
+        auto existing = query("SELECT id FROM dev_runs WHERE idempotency_key=?", {idempotency_key});
+        if (!existing.empty()) return existing[0]["id"].get<int>();
+    }
+    const int id = insert("INSERT INTO dev_runs(goal,workspace,idempotency_key) VALUES(?,?,?)",
+                          {goal, workspace, idempotency_key.empty() ? json(nullptr) : json(idempotency_key)});
+    log_activity("dev-agent", "started", "dev_run", id, "开发 Agent 开始处理：「" + goal + "」");
+    return id;
+}
+
+void Database::mark_dev_run_running(int id) {
+    change("UPDATE dev_runs SET status='running',completed_at=NULL WHERE id=?", {id});
+}
+
+void Database::update_dev_run(int id, const std::string& status, const json& output) {
+    change("UPDATE dev_runs SET status=?,output=?,completed_at=datetime('now','localtime') WHERE id=?",
+           {status, output.dump(), id});
+    log_activity("dev-agent", status, "dev_run", id,
+                 status == "completed" ? "开发 Agent 已完成代码生成与验证" : "开发 Agent 执行失败");
+}
+
+void Database::add_dev_step(int run_id, int sequence, const std::string& stage,
+                            const std::string& status, const json& input, const json& output) {
+    insert("INSERT INTO dev_steps(run_id,sequence,stage,status,input,output) VALUES(?,?,?,?,?,?)",
+           {run_id, sequence, stage, status, input.dump(), output.dump()});
+}
+
+json Database::list_dev_runs(int limit) {
+    limit = std::clamp(limit, 1, 100);
+    auto rows = query("SELECT * FROM dev_runs ORDER BY id DESC LIMIT ?", {limit});
+    for (auto& row : rows) {
+        try { row["output"] = json::parse(row.value("output", "{}")); }
+        catch (...) { row["output"] = json::object(); }
+    }
+    return rows;
+}
+
+json Database::get_dev_run(int id) {
+    auto rows = query("SELECT * FROM dev_runs WHERE id=?", {id});
+    if (rows.empty()) return nullptr;
+    try { rows[0]["output"] = json::parse(rows[0].value("output", "{}")); }
+    catch (...) { rows[0]["output"] = json::object(); }
+    rows[0]["steps"] = query("SELECT * FROM dev_steps WHERE run_id=? ORDER BY sequence", {id});
+    for (auto& step : rows[0]["steps"]) {
+        try { step["input"] = json::parse(step.value("input", "{}")); }
+        catch (...) { step["input"] = json::object(); }
+        try { step["output"] = json::parse(step.value("output", "{}")); }
+        catch (...) { step["output"] = json::object(); }
+    }
+    return rows[0];
 }
 
 void Database::update_agent_run(int id, const std::string& status, const json& output) {

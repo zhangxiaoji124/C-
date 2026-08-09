@@ -11,7 +11,7 @@ struct OllamaConfig {
     bool enabled = true;
     std::string base_url = "http://127.0.0.1:11434";
     std::string model = "qwen3:8b";
-    int timeout_seconds = 120;
+    int timeout_seconds = 240;
     bool fallback_to_rules = true;
 };
 
@@ -20,6 +20,8 @@ public:
     explicit OllamaClient(OllamaConfig config = {});
 
     json generate_plan(const json& context, const std::string& goal) const;
+    json generate_development_plan(const json& workspace, const std::string& goal,
+                                   const std::string& feedback, int round) const;
     json status() const;
     const OllamaConfig& config() const { return config_; }
 
@@ -29,8 +31,8 @@ private:
     json request(const std::string& path, const json& body) const;
     json get(const std::string& path) const;
     static json response_schema();
+    static json development_schema();
     static std::string system_prompt();
 };
 
 } // namespace orbit
-

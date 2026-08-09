@@ -12,7 +12,7 @@ else
   LDLIBS := -pthread -ldl
 endif
 
-CORE_SOURCES := src/database.cpp src/ollama_client.cpp src/agent.cpp src/worker.cpp src/http_server.cpp
+CORE_SOURCES := src/database.cpp src/ollama_client.cpp src/agent.cpp src/dev_agent.cpp src/worker.cpp src/http_server.cpp
 CORE_OBJECTS := $(CORE_SOURCES:src/%.cpp=$(BUILD_DIR)/%.o)
 
 .PHONY: all clean test run

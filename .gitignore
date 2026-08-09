@@ -1,6 +1,7 @@
 build/
 data/*.db
 data/*.db-*
+agent_workspace/
 .env
 *.exe
 *.o

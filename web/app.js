@@ -1,4 +1,4 @@
-const state = { projects: [], tasks: [], dashboard: null, currentView: 'dashboard', clusterTimer: null };
+const state = { projects: [], tasks: [], dashboard: null, currentView: 'dashboard', clusterTimer: null, agentMode: 'planner' };
 const statusMeta = {
   todo: { label: '待开始', color: '#8d8997' },
   in_progress: { label: '进行中', color: '#6754d9' },
@@ -174,11 +174,25 @@ function taskCard(task) {
 
 async function loadAgent() {
   if (!state.projects.length) await loadProjects();
-  const [runs, provider] = await Promise.all([api('/api/agent/runs?limit=12'), api('/api/agent/provider')]);
+  const [runs, provider, devRuns, devStatus] = await Promise.all([
+    api('/api/agent/runs?limit=12'), api('/api/agent/provider'), api('/api/dev/runs?limit=12'), api('/api/dev/status')
+  ]);
   const badge = $('#providerBadge');
   badge.classList.toggle('offline', !provider.available || !provider.model_available);
   badge.innerHTML = `<i></i>${provider.available && provider.model_available ? `Ollama 在线 · ${escapeHtml(provider.model)}` : 'Ollama 不可用 · 自动降级规则引擎'}`;
+  $('#devWorkspace').textContent = devStatus.workspace;
   renderRuns(runs);
+  renderDevRuns(devRuns);
+}
+
+function setAgentMode(mode) {
+  state.agentMode = mode;
+  $$('.agent-mode-tabs button').forEach(button => button.classList.toggle('active', button.dataset.agentMode === mode));
+  $('#plannerConsole').classList.toggle('hidden', mode !== 'planner');
+  $('#developerConsole').classList.toggle('hidden', mode !== 'developer');
+  $('#agentRuns').classList.toggle('hidden', mode !== 'planner');
+  $('#devRuns').classList.toggle('hidden', mode !== 'developer');
+  $('#historyTitle').textContent = mode === 'developer' ? '开发运行' : '最近运行';
 }
 
 function renderRuns(runs) {
@@ -186,6 +200,41 @@ function renderRuns(runs) {
     <div><small>${escapeHtml(run.project_name || '已删除项目')}</small><i class="run-dot ${run.status}"></i></div>
     <h4>${escapeHtml(run.goal)}</h4><small>${relativeTime(run.started_at)} · ${run.mode === 'execute' ? '执行' : '预览'}</small></article>`).join('') || '<p class="empty">暂无 Agent 运行</p>';
   $$('.run-item').forEach(item => item.addEventListener('click', () => showRun(Number(item.dataset.run))));
+}
+
+function renderDevRuns(runs) {
+  $('#devRuns').innerHTML = runs.map(run => `<article class="run-item" data-dev-run="${run.id}">
+    <div><small>自主开发 · ${escapeHtml(run.workspace.split(/[\\/]/).pop())}</small><i class="run-dot ${run.status}"></i></div>
+    <h4>${escapeHtml(run.goal)}</h4><small>${relativeTime(run.started_at)} · ${run.output?.rounds || 0} 轮</small></article>`).join('') || '<p class="empty">暂无开发运行</p>';
+  $$('[data-dev-run]').forEach(item => item.addEventListener('click', () => showDevRun(Number(item.dataset.devRun))));
+}
+
+async function showDevRun(id, poll = false) {
+  const run = await api(`/api/dev/runs/${id}`);
+  $('#devRunPanel').classList.remove('hidden');
+  $('#devRunGoal').textContent = run.goal;
+  $('#devRunId').textContent = `DEV #${run.id}`;
+  $('#devRunStatus').textContent = { queued: '队列等待', running: '自主开发中', completed: '构建测试通过', failed: '开发失败' }[run.status] || run.status;
+  const stageLabels = { observe: '观察代码', plan: '模型规划', write_file: '写入文件', build: '构建', test: '测试', git_diff: '检查差异', verify: '结果验证', error: '异常' };
+  $('#devTimeline').innerHTML = (run.steps || []).map(step => {
+    const detail = step.output?.path || step.output?.command || step.output?.summary || step.output?.error || '';
+    return `<div class="dev-step ${step.status}"><i>${step.status === 'completed' ? 'OK' : '!'}</i><b>${stageLabels[step.stage] || escapeHtml(step.stage)}</b><code>${escapeHtml(detail)}</code><small>${step.status}</small></div>`;
+  }).join('') || '<p class="empty">Worker 正在领取任务…</p>';
+  if (run.status === 'completed' || run.status === 'failed') {
+    const output = run.output || {};
+    const uniqueFiles = [...new Set((output.written_files || []).map(file => file.path))];
+    const lastTool = (output.tool_results || []).at(-1);
+    $('#devResult').classList.remove('hidden');
+    $('#devResult').innerHTML = `<h4>${output.success ? '自主开发完成' : '自主开发未通过'}</h4>
+      <p>${escapeHtml(output.summary || output.error || '运行结束')}</p>
+      ${uniqueFiles.length ? `<div class="file-chips">${uniqueFiles.map(file => `<span>${escapeHtml(file)}</span>`).join('')}</div>` : ''}
+      <p>共执行 ${output.rounds || 0} 轮；模型 ${escapeHtml(output.provider?.model || '—')}；构建与测试${output.success ? '全部通过' : '未全部通过'}。</p>
+      ${lastTool?.output ? `<pre class="dev-output">${escapeHtml(lastTool.output)}</pre>` : ''}`;
+    if (poll) await loadAgent();
+  } else {
+    $('#devResult').classList.add('hidden');
+    if (poll) setTimeout(() => showDevRun(id, true).catch(error => toast(error.message, true)), 900);
+  }
 }
 
 async function showRun(id, poll = false) {
@@ -231,7 +280,9 @@ function bindEvents() {
   $('#boardAdd').addEventListener('click', () => $('#taskDialog').showModal());
   $('#newProject').addEventListener('click', () => $('#projectDialog').showModal());
   $('#projectFilter').addEventListener('change', loadBoard);
-  $$('.suggestions button').forEach(button => button.addEventListener('click', () => $('#agentGoal').value = button.dataset.prompt));
+  $$('[data-prompt]').forEach(button => button.addEventListener('click', () => $('#agentGoal').value = button.dataset.prompt));
+  $$('.agent-mode-tabs button').forEach(button => button.addEventListener('click', () => setAgentMode(button.dataset.agentMode)));
+  $$('[data-dev-prompt]').forEach(button => button.addEventListener('click', () => $('#devGoal').value = button.dataset.devPrompt));
 
   $('#taskForm').addEventListener('submit', async event => {
     event.preventDefault();
@@ -268,6 +319,18 @@ function bindEvents() {
       toast('工作流已进入分布式队列'); await showRun(result.run_id, true);
     } catch (error) { toast(error.message, true); }
     finally { button.disabled = false; button.innerHTML = '<span>✦</span>启动工作流'; }
+  });
+  $('#devAgentForm').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = $('#devAgentForm .agent-button'); button.disabled = true; button.textContent = '正在创建开发作业…';
+    try {
+      const result = await api('/api/dev/runs', {
+        method: 'POST', headers: { 'Idempotency-Key': crypto.randomUUID() },
+        body: JSON.stringify({ goal: $('#devGoal').value.trim() })
+      });
+      toast('开发作业已进入 Worker 队列'); await showDevRun(result.run_id, true);
+    } catch (error) { toast(error.message, true); }
+    finally { button.disabled = false; button.innerHTML = '<span>⌘</span>开始自主开发'; }
   });
   window.addEventListener('hashchange', () => navigate(location.hash.slice(1), false));
 }

@@ -65,6 +65,9 @@ def main() -> int:
         status, html = request("/")
         assert status == 200 and "OrbitOps" in html; assertions += 1
 
+        status, dev_status = request("/api/dev/status")
+        assert status == 200 and not dev_status["enabled"] and "workspace" in dev_status; assertions += 1
+
         _, project = request("/api/projects", "POST", {
             "name": "E2E 分布式测试", "description": "API 与 Worker 跨进程协作", "color": "#0984E3"
         })
@@ -98,8 +101,13 @@ def main() -> int:
         _, tasks = request(f"/api/tasks?project_id={project['id']}")
         assert len(tasks) >= 4; assertions += 1
 
-        time.sleep(0.3)
-        _, cluster = request("/api/cluster")
+        cluster = None
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            _, cluster = request("/api/cluster")
+            if cluster["queue"]["completed"] >= 1:
+                break
+            time.sleep(0.1)
         node_ids = {node["node_id"] for node in cluster["nodes"]}
         assert "e2e-worker" in node_ids and "e2e-api-api" in node_ids; assertions += 1
         assert cluster["queue"]["completed"] >= 1; assertions += 1

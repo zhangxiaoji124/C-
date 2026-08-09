@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="OrbitOps — 分布式 AI 项目运营台">
   <title>OrbitOps · 智能项目运营台</title>
-  <link rel="stylesheet" href="/styles.css?v=1.1.1">
+  <link rel="stylesheet" href="/styles.css?v=1.2.0">
 </head>
 <body>
   <div class="app-shell">
@@ -23,7 +23,7 @@
       </nav>
       <div class="sidebar-foot">
         <div class="system-chip"><span class="pulse"></span><div><b>系统在线</b><small>API 与队列正常</small></div></div>
-        <p>OrbitOps v1.1.1 · LOCAL AI</p>
+        <p>OrbitOps v1.2.0 · LOCAL AI</p>
       </div>
     </aside>
 
@@ -100,6 +100,11 @@
         <div class="agent-layout">
           <div class="agent-main">
             <div class="agent-heading"><span class="agent-spark">✦</span><div><span class="section-kicker">AUTONOMOUS WORKFLOW</span><h2>把目标交给 Orbit Agent</h2><p>Agent 会读取项目现状、调用本地模型规划工具，并在执行后自动校验。</p><span class="provider-badge" id="providerBadge"><i></i>正在检测本地模型</span></div></div>
+            <div class="agent-mode-tabs" role="tablist">
+              <button class="active" type="button" data-agent-mode="planner">项目规划 Agent</button>
+              <button type="button" data-agent-mode="developer">自主开发 Agent <i>NEW</i></button>
+            </div>
+            <div id="plannerConsole">
             <form class="agent-composer" id="agentForm">
               <label for="agentProject">选择项目</label>
               <select id="agentProject" required></select>
@@ -120,10 +125,33 @@
               <div class="workflow" id="workflow"></div>
               <div class="agent-result hidden" id="agentResult"></div>
             </article>
+            </div>
+            <div class="hidden" id="developerConsole">
+              <form class="agent-composer dev-composer" id="devAgentForm">
+                <div class="dev-safety"><span>⌘</span><div><b>固定开发工作区</b><small id="devWorkspace">正在读取工作区…</small></div></div>
+                <label for="devGoal">描述要自主完成的 C++ 开发任务</label>
+                <textarea id="devGoal" rows="6" maxlength="4000" required placeholder="例如：创建一个 C++20 命令行待办应用，支持新增、完成和查询任务，提供 Makefile 与自动化测试。"></textarea>
+                <div class="suggestions">
+                  <button type="button" data-dev-prompt="创建一个 C++20 命令行计算器，支持四则运算和错误处理，提供 Makefile 和完整自动化测试。">命令行计算器</button>
+                  <button type="button" data-dev-prompt="创建一个 C++20 线程安全任务队列库，包含生产者消费者示例、Makefile 和压力测试。">并发任务队列</button>
+                  <button type="button" data-dev-prompt="创建一个 C++20 JSON 日志分析器，统计日志级别和高频消息，提供示例数据、Makefile 和测试。">日志分析器</button>
+                </div>
+                <div class="agent-submit-row">
+                  <label class="dev-consent"><input type="checkbox" id="devConsent" required>允许 Agent 在固定工作区写文件并运行构建测试</label>
+                  <button class="agent-button" type="submit"><span>⌘</span>开始自主开发</button>
+                </div>
+              </form>
+              <article class="run-panel hidden" id="devRunPanel">
+                <div class="run-head"><div><span class="run-status" id="devRunStatus">排队中</span><h3 id="devRunGoal"></h3></div><span id="devRunId"></span></div>
+                <div class="dev-timeline" id="devTimeline"></div>
+                <div class="agent-result hidden" id="devResult"></div>
+              </article>
+            </div>
           </div>
           <aside class="agent-history">
-            <div class="card-title"><div><span class="section-kicker">RUN HISTORY</span><h3>最近运行</h3></div></div>
+            <div class="card-title"><div><span class="section-kicker">RUN HISTORY</span><h3 id="historyTitle">最近运行</h3></div></div>
             <div id="agentRuns" class="run-list"></div>
+            <div id="devRuns" class="run-list hidden"></div>
           </aside>
         </div>
       </section>
@@ -164,6 +192,6 @@
     </form>
   </dialog>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/app.js?v=1.1.1" defer></script>
+  <script src="/app.js?v=1.2.0" defer></script>
 </body>
 </html>

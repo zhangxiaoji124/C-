@@ -38,6 +38,8 @@ erDiagram
     PROJECTS ||--o{ AGENT_RUNS : scopes
     AGENT_RUNS ||--o{ AGENT_STEPS : records
     AGENT_RUNS ||--|| JOBS : dispatched_as
+    DEV_RUNS ||--o{ DEV_STEPS : records
+    DEV_RUNS ||--|| JOBS : dispatched_as
     SERVICE_NODES {
       string node_id PK
       string role
@@ -69,6 +71,25 @@ SQLite 启用 WAL、外键、5 秒 busy timeout、NORMAL synchronous 和针对�
 - 单次规划最多提升三个风险任务，并生成有限数量的拆解任务。
 - 所有动作记录执行实体 ID，完成后重新观察项目并运行一致性检查。
 - 任一阶段异常会记录 `error` 步骤，将运行标记为失败，并交由队列决定是否重试。
+
+## 自主开发执行器
+
+`DeveloperAgent` 与项目规划工作流共用持久化队列，但拥有独立的 `dev_runs/dev_steps` 审计模型。它将工作区快照和用户目标发送给 Ollama，使用 JSON Schema 约束文件列表与工具配置。C++ 层随后再次验证相对路径、扩展名、单文件大小、总写入量和工具白名单。
+
+```mermaid
+flowchart LR
+    Goal["开发目标"] --> Observe["读取沙箱"]
+    Observe --> Plan["Ollama 结构化计划"]
+    Plan --> Validate["C++ 安全校验"]
+    Validate --> Write["写入完整文件"]
+    Write --> Build["固定构建配置"]
+    Build --> Test["固定测试配置"]
+    Build -->|失败日志| Plan
+    Test -->|失败日志| Plan
+    Test -->|通过| Done["持久化结果"]
+```
+
+Worker 每 20 秒续租正在运行的长任务，进程崩溃后租约到期即可由其他节点接管。`claim_job` 对 `dev_run` 额外施加数据库级互斥：任一时刻只有一个未过期开发作业可以写共享工作区，而普通项目规划任务仍可由其他 Worker 并行处理。
 
 ## 扩展建议
 

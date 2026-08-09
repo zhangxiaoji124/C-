@@ -9,6 +9,7 @@
 - 完整业务闭环：项目与任务 CRUD、筛选、看板拖拽、优先级、进度和活动日志
 - 本地大模型 Agent：Ollama + `qwen3:8b` 结构化规划，完整数据留在本机
 - 可解释工作流：`Intake → Observe → Plan → Act → Verify` 五阶段全程留痕
+- 自主开发闭环：观察代码 → 生成完整文件 → 编译 → 测试 → 将错误反馈给模型，最多自动修复五轮
 - 分布式执行：API/Worker 角色分离、SQLite WAL 持久化队列、任务租约、超时接管、指数退避与最多三次重试
 - 一致性保护：请求幂等键、任务去重键、白名单工具调用、执行后数据校验
 - 可观测性：节点注册与心跳、队列状态、Agent 步骤留痕、`/metrics` Prometheus 指标
@@ -30,6 +31,8 @@ flowchart LR
     W2 --> DB
     W1 --> Flow["观察 → 规划 → 工具 → 校验"]
     W2 --> Flow
+    Flow --> Sandbox["隔离开发工作区"]
+    Flow --> Ollama["本地 Ollama"]
 ```
 
 本地演示使用 SQLite，实现同一主机或共享 Docker Volume 上的多进程协调。若要跨主机大规模部署，持久层接口已集中封装在 `Database` 类中，可替换为 PostgreSQL，任务层可迁移到 Redis Streams 或 Kafka；业务 API 与 Agent 工作流无需改变。
@@ -115,6 +118,20 @@ docker compose up --build
 
 模型输出不会直接执行：C++ 会过滤未知工具、校验任务 ID、限制动作数量、移除危险字段，并禁止模型将任务直接标记为完成。Ollama 不可用时会降级到确定性规则规划器，因此系统依然可以离线运行且无需付费 API。
 
+### 自主开发 Agent
+
+Agent 页面的「自主开发 Agent」处理真实代码，不只是生成任务卡片。提交目标后，Worker 会读取固定的 `agent_workspace`，要求 Ollama 按 JSON Schema 返回完整文件和执行方案，然后只通过下列受控工具执行：
+
+1. `workspace_snapshot`：读取最多 40 个源码/配置文件，并限制上下文总量；
+2. `write_file`：只写入工作区内的 C/C++、Markdown、JSON、YAML、Make/CMake 文件；
+3. `build`：执行固定的 `make -j2` 构建配置；
+4. `test`：执行固定的 `make test`；
+5. `git_diff`：仅在工作区本身是 Git 仓库时执行 `git diff --check`。
+
+构建或测试失败时，真实日志会进入下一轮模型上下文，最多自动修复五轮。所有观察、计划、写文件、命令结果和验证结论分别写入 `dev_runs` 与 `dev_steps`。多个分布式 Worker 会续租长任务，但同一工作区的开发作业严格串行，避免并发覆盖。开发 Agent 必须使用在线 Ollama，不会用规则引擎伪装成代码生成。
+
+工作区可通过 `ORBITOPS_DEV_WORKSPACE` 或 `--dev-workspace` 修改；建议始终指向专用目录。开发 Agent 会执行模型生成的 C++ 代码和 Makefile，因此生产环境还应在独立的低权限账户或容器中运行 Worker；固定工作区限制的是文件写入路径，不等同于操作系统级隔离。
+
 ## API 概览
 
 | 方法 | 路径 | 说明 |
@@ -128,6 +145,9 @@ docker compose up --build
 | `POST` | `/api/agent/runs` | 异步提交 Agent 工作流 |
 | `GET` | `/api/agent/runs/{id}` | 查询工作流和步骤 |
 | `GET` | `/api/agent/provider` | Ollama 与模型在线状态 |
+| `GET` | `/api/dev/status` | 开发 Agent、模型、工具与沙箱状态 |
+| `POST` | `/api/dev/runs` | 异步提交自主开发作业 |
+| `GET` | `/api/dev/runs/{id}` | 查询文件、构建、测试与修复时间线 |
 | `GET` | `/api/cluster` | 节点与队列状态 |
 | `GET` | `/metrics` | Prometheus 文本指标 |
 
@@ -148,8 +168,8 @@ curl -X POST http://127.0.0.1:8080/api/agent/runs \
 
 测试分为三层：
 
-- `orbitops_tests`：20 项数据层、Agent、Provider 配置、幂等、队列租约与节点发现断言。
-- `tests/e2e_test.py`：启动独立 API/Worker 进程，验证 Web、REST、幂等请求、持久化队列、Agent 执行、集群发现和监控指标，共 13 项断言。
+- `orbitops_tests`：27 项数据层、两类 Agent、幂等、开发任务串行化、队列租约与节点发现断言。
+- `tests/e2e_test.py`：启动独立 API/Worker 进程，验证 Web、REST、开发 Agent 状态、持久化队列、Agent 执行、集群发现和监控指标，共 14 项断言。
 - `tests/ollama_integration_test.py`：如果本机存在 `qwen3:8b`，启动独立服务并验证真实模型推理、结构化计划、安全工具执行与 Token/耗时指标；没有模型时自动跳过。
 
 ## 项目结构

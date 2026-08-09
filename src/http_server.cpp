@@ -1,6 +1,7 @@
 #include "orbit/http_server.hpp"
 #include "orbit/agent.hpp"
 #include "orbit/database.hpp"
+#include "orbit/dev_agent.hpp"
 
 #include <httplib.h>
 #include <nlohmann/json.hpp>
@@ -35,8 +36,9 @@ std::optional<int> int_param(const httplib::Request& request, const char* name) 
 
 } // namespace
 
-HttpServer::HttpServer(Database& database, AgentWorkflow& agent, std::filesystem::path web_root)
-    : database_(database), agent_(agent), web_root_(std::move(web_root)) {}
+HttpServer::HttpServer(Database& database, AgentWorkflow& agent, DeveloperAgent& dev_agent,
+                       std::filesystem::path web_root)
+    : database_(database), agent_(agent), dev_agent_(dev_agent), web_root_(std::move(web_root)) {}
 
 bool HttpServer::listen(const std::string& host, int port) {
     httplib::Server server;
@@ -81,7 +83,7 @@ bool HttpServer::listen(const std::string& host, int port) {
     });
 
     server.Get("/api/health", [&](const httplib::Request&, httplib::Response& response) {
-        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.1.1"}});
+        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.2.0"}});
     });
     server.Get("/api/dashboard", [&](const httplib::Request&, httplib::Response& response) {
         send_json(response, database_.dashboard());
@@ -191,6 +193,37 @@ bool HttpServer::listen(const std::string& host, int port) {
             3, "agent-run-" + std::to_string(run_id));
         const json persisted = database_.get_agent_run(run_id);
         send_json(response, {{"run_id", run_id}, {"job_id", job_id}, {"status", persisted.value("status", "queued")}}, 202);
+    });
+
+    server.Get("/api/dev/status", [&](const httplib::Request&, httplib::Response& response) {
+        send_json(response, dev_agent_.status());
+    });
+    server.Get("/api/dev/runs", [&](const httplib::Request& request, httplib::Response& response) {
+        send_json(response, database_.list_dev_runs(int_param(request, "limit").value_or(20)));
+    });
+    server.Get(R"(/api/dev/runs/(\d+))", [&](const httplib::Request& request, httplib::Response& response) {
+        const json run = database_.get_dev_run(path_id(request));
+        run.is_null() ? send_json(response, {{"error", "开发 Agent 运行记录不存在"}}, 404) : send_json(response, run);
+    });
+    server.Post("/api/dev/runs", [&](const httplib::Request& request, httplib::Response& response) {
+        const json body = parse_body(request);
+        if (!body.contains("goal") || !body["goal"].is_string()) {
+            throw std::invalid_argument("goal 不能为空");
+        }
+        const std::string goal = body["goal"].get<std::string>();
+        if (goal.empty() || goal.size() > 4000) throw std::invalid_argument("开发目标长度应为 1-4000 个字符");
+        const json dev_status = dev_agent_.status();
+        if (!dev_status.value("available", false) || !dev_status.value("model_available", false)) {
+            throw std::invalid_argument("本地 Ollama 或配置模型不可用，开发 Agent 无法启动");
+        }
+        const std::string key = request.get_header_value("Idempotency-Key");
+        const std::string workspace = dev_status.value("workspace", "agent_workspace");
+        const int run_id = database_.create_dev_run(goal, workspace, key);
+        const int job_id = database_.enqueue_job("dev_run", {{"run_id", run_id}, {"goal", goal}},
+                                                  1, "dev-run-" + std::to_string(run_id));
+        const json persisted = database_.get_dev_run(run_id);
+        send_json(response, {{"run_id", run_id}, {"job_id", job_id},
+                             {"status", persisted.value("status", "queued")}, {"workspace", workspace}}, 202);
     });
 
     if (!std::filesystem::exists(web_root_ / "index.html")) {

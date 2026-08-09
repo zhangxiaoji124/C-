@@ -6,6 +6,7 @@ services:
       - "8080:8080"
     volumes:
       - orbit-data:/app/data
+      - orbit-workspace:/app/agent_workspace
     environment:
       ORBITOPS_OLLAMA_URL: http://host.docker.internal:11434
       ORBITOPS_OLLAMA_MODEL: qwen3:8b
@@ -22,6 +23,7 @@ services:
     command: ["--role", "worker", "--node-id", "compose-worker-1"]
     volumes:
       - orbit-data:/app/data
+      - orbit-workspace:/app/agent_workspace
     environment:
       ORBITOPS_OLLAMA_URL: http://host.docker.internal:11434
       ORBITOPS_OLLAMA_MODEL: qwen3:8b
@@ -33,6 +35,7 @@ services:
     command: ["--role", "worker", "--node-id", "compose-worker-2"]
     volumes:
       - orbit-data:/app/data
+      - orbit-workspace:/app/agent_workspace
     environment:
       ORBITOPS_OLLAMA_URL: http://host.docker.internal:11434
       ORBITOPS_OLLAMA_MODEL: qwen3:8b
@@ -42,3 +45,4 @@ services:
 
 volumes:
   orbit-data:
+  orbit-workspace:

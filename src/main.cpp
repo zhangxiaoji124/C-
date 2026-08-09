@@ -1,5 +1,6 @@
 #include "orbit/agent.hpp"
 #include "orbit/database.hpp"
+#include "orbit/dev_agent.hpp"
 #include "orbit/http_server.hpp"
 #include "orbit/worker.hpp"
 
@@ -52,18 +53,19 @@ struct Config {
     int port = std::stoi(env_or("ORBITOPS_PORT", "8080"));
     std::filesystem::path database = env_or("ORBITOPS_DB", "data/orbitops.db");
     std::filesystem::path web = env_or("ORBITOPS_WEB", "web");
+    std::filesystem::path dev_workspace = env_or("ORBITOPS_DEV_WORKSPACE", "agent_workspace");
     orbit::OllamaConfig ollama = {
         env_bool("ORBITOPS_OLLAMA_ENABLED", true),
         env_or("ORBITOPS_OLLAMA_URL", "http://127.0.0.1:11434"),
         env_or("ORBITOPS_OLLAMA_MODEL", "qwen3:8b"),
-        std::stoi(env_or("ORBITOPS_OLLAMA_TIMEOUT", "120")),
+        std::stoi(env_or("ORBITOPS_OLLAMA_TIMEOUT", "240")),
         env_bool("ORBITOPS_OLLAMA_FALLBACK", true)
     };
     std::string node_id = env_or("COMPUTERNAME", env_or("HOSTNAME", "node")) + "-" + std::to_string(process_id());
 };
 
 void print_help() {
-    std::cout << R"HELP(OrbitOps 1.1.1 - distributed local-AI project operations platform
+    std::cout << R"HELP(OrbitOps 1.2.0 - distributed local-AI project operations platform
 
 Usage: orbitops [options]
   --role <all|api|worker>  Process role (default: all)
@@ -72,6 +74,7 @@ Usage: orbitops [options]
   --db <path>              SQLite database path
   --web <path>             Static web directory
   --node-id <id>           Cluster node identity
+  --dev-workspace <path>   Fixed workspace for autonomous development
   --ollama-url <url>       Local Ollama base URL
   --ollama-model <name>    Ollama model (default: qwen3:8b)
   --no-ollama              Disable model inference and use rules
@@ -94,6 +97,7 @@ Config parse_args(int argc, char** argv) {
         else if (arg == "--db") config.database = next();
         else if (arg == "--web") config.web = next();
         else if (arg == "--node-id") config.node_id = next();
+        else if (arg == "--dev-workspace") config.dev_workspace = next();
         else if (arg == "--ollama-url") config.ollama.base_url = next();
         else if (arg == "--ollama-model") config.ollama.model = next();
         else if (arg == "--no-ollama") config.ollama.enabled = false;
@@ -120,9 +124,10 @@ int main(int argc, char** argv) {
         database.migrate();
         database.seed_if_empty();
         orbit::AgentWorkflow agent(database, config.ollama);
+        orbit::DeveloperAgent dev_agent(database, config.ollama, config.dev_workspace);
 
         if (config.role == "worker") {
-            orbit::AgentWorker worker(database, agent, config.node_id);
+            orbit::AgentWorker worker(database, agent, dev_agent, config.node_id);
             std::cout << "OrbitOps worker started: " << worker.id() << '\n';
             worker.run(stop_requested);
             return 0;
@@ -131,7 +136,7 @@ int main(int argc, char** argv) {
         std::thread worker_thread;
         if (config.role == "all") {
             worker_thread = std::thread([&] {
-                orbit::AgentWorker worker(database, agent, config.node_id + "-worker");
+                orbit::AgentWorker worker(database, agent, dev_agent, config.node_id + "-worker");
                 worker.run(stop_requested);
             });
         }
@@ -140,7 +145,7 @@ int main(int argc, char** argv) {
             const std::string node = config.node_id + "-api";
             while (!stop_requested.load()) {
                 database.heartbeat_node(node, "api", config.host + ":" + std::to_string(config.port),
-                                        {{"version", "1.1.1"}, {"role", config.role},
+                                        {{"version", "1.2.0"}, {"role", config.role},
                                          {"agent_provider", config.ollama.enabled ? "ollama" : "rules"},
                                          {"agent_model", config.ollama.model}});
                 for (int i = 0; i < 50 && !stop_requested.load(); ++i) {
@@ -149,7 +154,7 @@ int main(int argc, char** argv) {
             }
         });
 
-        orbit::HttpServer server(database, agent, config.web);
+        orbit::HttpServer server(database, agent, dev_agent, config.web);
         const bool ok = server.listen(config.host, config.port);
         stop_requested.store(true);
         if (heartbeat.joinable()) heartbeat.join();
