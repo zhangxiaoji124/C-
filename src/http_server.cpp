@@ -52,6 +52,13 @@ bool HttpServer::listen(const std::string& host, int port) {
         response.set_header("X-Frame-Options", "DENY");
         return httplib::Server::HandlerResponse::Unhandled;
     });
+    server.set_post_routing_handler([](const httplib::Request& request, httplib::Response& response) {
+        if (request.path == "/" || request.path == "/index.html") {
+            response.set_header("Cache-Control", "no-cache, must-revalidate");
+        } else if (request.path.rfind("/api/", 0) == 0 || request.path == "/metrics") {
+            response.set_header("Cache-Control", "no-store");
+        }
+    });
     server.Options(R"(/.*)", [](const httplib::Request&, httplib::Response& response) {
         response.status = 204;
     });
@@ -74,7 +81,7 @@ bool HttpServer::listen(const std::string& host, int port) {
     });
 
     server.Get("/api/health", [&](const httplib::Request&, httplib::Response& response) {
-        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.1.0"}});
+        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.1.1"}});
     });
     server.Get("/api/dashboard", [&](const httplib::Request&, httplib::Response& response) {
         send_json(response, database_.dashboard());

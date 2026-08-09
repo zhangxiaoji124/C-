@@ -63,7 +63,7 @@ struct Config {
 };
 
 void print_help() {
-    std::cout << R"HELP(OrbitOps 1.1 - distributed local-AI project operations platform
+    std::cout << R"HELP(OrbitOps 1.1.1 - distributed local-AI project operations platform
 
 Usage: orbitops [options]
   --role <all|api|worker>  Process role (default: all)
@@ -140,7 +140,7 @@ int main(int argc, char** argv) {
             const std::string node = config.node_id + "-api";
             while (!stop_requested.load()) {
                 database.heartbeat_node(node, "api", config.host + ":" + std::to_string(config.port),
-                                        {{"version", "1.1.0"}, {"role", config.role},
+                                        {{"version", "1.1.1"}, {"role", config.role},
                                          {"agent_provider", config.ollama.enabled ? "ollama" : "rules"},
                                          {"agent_model", config.ollama.model}});
                 for (int i = 0; i < 50 && !stop_requested.load(); ++i) {
