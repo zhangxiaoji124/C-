@@ -17,7 +17,8 @@ EXE = ROOT / "build" / ("orbitops.exe" if os.name == "nt" else "orbitops")
 DB = ROOT / "build" / "orbitops-ollama-test.db"
 PORT = 18083
 BASE = f"http://127.0.0.1:{PORT}"
-MODEL = os.getenv("ORBITOPS_OLLAMA_MODEL", "qwen3:8b")
+MODEL = os.getenv("ORBITOPS_OLLAMA_MODEL", "llama3.2:3b")
+PLAN_MODEL = os.getenv("ORBITOPS_OLLAMA_REVIEW_MODEL", "llama3.2:3b")
 
 
 def call(base: str, path: str, method: str = "GET", payload: dict | None = None, headers: dict | None = None):
@@ -31,7 +32,8 @@ def call(base: str, path: str, method: str = "GET", payload: dict | None = None,
 def ollama_ready() -> bool:
     try:
         tags = call("http://127.0.0.1:11434", "/api/tags")
-        return MODEL in {item.get("name") or item.get("model") for item in tags.get("models", [])}
+        models = {item.get("name") or item.get("model") for item in tags.get("models", [])}
+        return MODEL in models and PLAN_MODEL in models
     except (OSError, urllib.error.URLError):
         return False
 
@@ -58,7 +60,7 @@ def main() -> int:
 
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     common = ["--db", "build/orbitops-ollama-test.db", "--web", "web",
-              "--ollama-model", MODEL, "--ollama-required"]
+              "--ollama-model", MODEL, "--review-model", PLAN_MODEL, "--ollama-required"]
     api_process = subprocess.Popen([str(EXE), "--role", "api", "--node-id", "ollama-test-api",
                                     "--port", str(PORT), *common], cwd=ROOT, creationflags=flags)
     worker = None
@@ -67,7 +69,8 @@ def main() -> int:
         worker = subprocess.Popen([str(EXE), "--role", "worker", "--node-id", "ollama-test-worker", *common],
                                   cwd=ROOT, creationflags=flags)
         provider = call(BASE, "/api/agent/provider")
-        assert provider["available"] and provider["model_available"] and provider["model"] == MODEL
+        assert (provider["available"] and provider["model_available"] and
+                provider["review_model_available"] and provider["model"] == MODEL)
 
         project = call(BASE, "/api/projects", "POST", {
             "name": "珠宝电商智能客服", "description": "提升高客单价珠宝咨询的准确率与成交转化", "color": "#6754d9"
@@ -91,13 +94,13 @@ def main() -> int:
             time.sleep(0.5)
         assert run and run["status"] == "completed", run
         assert run["output"]["provider"]["type"] == "ollama", run["output"]
-        assert run["output"]["provider"]["model"] == MODEL
+        assert run["output"]["provider"]["model"] == PLAN_MODEL
         assert run["output"]["execution"]["applied_count"] >= 1
         generated = [task for task in call(BASE, f"/api/tasks?project_id={project['id']}")
                      if "Ollama 生成" in task.get("tags", [])]
         assert generated
         print(json.dumps({
-            "status": "passed", "model": MODEL, "run_id": run["id"],
+            "status": "passed", "model": PLAN_MODEL, "run_id": run["id"],
             "duration_ms": run["output"]["provider"]["total_duration_ms"],
             "prompt_tokens": run["output"]["provider"]["prompt_tokens"],
             "completion_tokens": run["output"]["provider"]["completion_tokens"],

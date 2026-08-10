@@ -83,7 +83,7 @@ bool HttpServer::listen(const std::string& host, int port) {
     });
 
     server.Get("/api/health", [&](const httplib::Request&, httplib::Response& response) {
-        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.2.0"}});
+        send_json(response, {{"status", "ok"}, {"service", "orbitops-api"}, {"version", "1.2.1"}});
     });
     server.Get("/api/dashboard", [&](const httplib::Request&, httplib::Response& response) {
         send_json(response, database_.dashboard());
@@ -213,8 +213,9 @@ bool HttpServer::listen(const std::string& host, int port) {
         const std::string goal = body["goal"].get<std::string>();
         if (goal.empty() || goal.size() > 4000) throw std::invalid_argument("开发目标长度应为 1-4000 个字符");
         const json dev_status = dev_agent_.status();
-        if (!dev_status.value("available", false) || !dev_status.value("model_available", false)) {
-            throw std::invalid_argument("本地 Ollama 或配置模型不可用，开发 Agent 无法启动");
+        if (!dev_status.value("available", false) || !dev_status.value("model_available", false) ||
+            !dev_status.value("review_model_available", false)) {
+            throw std::invalid_argument("本地 Ollama、开发模型或审查模型不可用，开发 Agent 无法启动");
         }
         const std::string key = request.get_header_value("Idempotency-Key");
         const std::string workspace = dev_status.value("workspace", "agent_workspace");

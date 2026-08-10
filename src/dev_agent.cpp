@@ -3,14 +3,21 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
-#ifndef _WIN32
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
 #include <sys/wait.h>
 #endif
 
@@ -31,6 +38,49 @@ std::string json_safe_log(std::string value) {
     }
 }
 
+std::string normalize_makefile(std::string content) {
+    const std::array<std::string, 4> old_standards = {
+        "-std=c++98", "-std=c++11", "-std=c++14", "-std=c++17"
+    };
+    for (const auto& standard : old_standards) {
+        std::size_t position = 0;
+        while ((position = content.find(standard, position)) != std::string::npos) {
+            content.replace(position, standard.size(), "-std=c++20");
+            position += 10;
+        }
+    }
+    std::istringstream input(content);
+    std::ostringstream output;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (line.rfind("//", 0) == 0) line.replace(0, 2, "#");
+        if (line.rfind("all:", 0) == 0) {
+            std::string prerequisite = line.substr(4);
+            prerequisite.erase(0, prerequisite.find_first_not_of(" \t"));
+            const auto end = prerequisite.find_first_of(" \t");
+            if (end != std::string::npos) prerequisite.resize(end);
+            if (!prerequisite.empty() && content.find("\n" + prerequisite + ":") == std::string::npos &&
+                content.find("-o " + prerequisite) != std::string::npos) {
+                line = "all:";
+            }
+        }
+        const std::array<std::string, 7> recipes = {
+            "g++ ", "gcc ", "clang++ ", "$(CXX) ", "$(CC) ", "./", ".\\"
+        };
+        if (!line.empty() && line.front() != '\t') {
+            for (const auto& prefix : recipes) {
+                if (line.rfind(prefix, 0) == 0) {
+                    if (prefix == "gcc " && line.find(".cpp") != std::string::npos) line.replace(0, 3, "g++");
+                    line.insert(line.begin(), '\t');
+                    break;
+                }
+            }
+        }
+        output << line << '\n';
+    }
+    return output.str();
+}
+
 } // namespace
 
 DeveloperAgent::DeveloperAgent(Database& database, OllamaConfig config, std::filesystem::path workspace)
@@ -41,7 +91,7 @@ DeveloperAgent::DeveloperAgent(Database& database, OllamaConfig config, std::fil
 json DeveloperAgent::status() const {
     json result = ollama_.status();
     result["workspace"] = workspace_.string();
-    result["max_rounds"] = 5;
+    result["max_rounds"] = 7;
     result["tools"] = json::array({"workspace_snapshot", "write_file", "build", "test", "git_diff"});
     result["execution_scope"] = "fixed_workspace";
     return result;
@@ -107,7 +157,10 @@ json DeveloperAgent::validate_plan(const json& candidate) const {
             !file["path"].is_string() || !file["content"].is_string() || result["files"].size() >= 10) continue;
         const std::string path = file["path"].get<std::string>();
         safe_path(path);
-        const std::string content = file["content"].get<std::string>();
+        std::string content = file["content"].get<std::string>();
+        if (std::filesystem::path(path).filename() == "Makefile") {
+            content = normalize_makefile(std::move(content));
+        }
         if (content.size() > 131072 || total_bytes + content.size() > 524288) continue;
         const auto extension = std::filesystem::path(path).extension().string();
         const std::string filename = std::filesystem::path(path).filename().string();
@@ -163,26 +216,103 @@ json DeveloperAgent::apply_files(int run_id, int& sequence, const json& files) {
 }
 
 json DeveloperAgent::run_command(const std::string& command) const {
-    const std::string shell_command = command + " 2>&1";
 #ifdef _WIN32
-    FILE* pipe = _popen(shell_command.c_str(), "r");
+    SECURITY_ATTRIBUTES security{sizeof(SECURITY_ATTRIBUTES), nullptr, TRUE};
+    HANDLE read_pipe = nullptr;
+    HANDLE write_pipe = nullptr;
+    if (!CreatePipe(&read_pipe, &write_pipe, &security, 0) ||
+        !SetHandleInformation(read_pipe, HANDLE_FLAG_INHERIT, 0)) {
+        if (read_pipe) CloseHandle(read_pipe);
+        if (write_pipe) CloseHandle(write_pipe);
+        throw std::runtime_error("Cannot create build output pipe");
+    }
+    HANDLE null_input = CreateFileA("NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                    &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    STARTUPINFOA startup{};
+    startup.cb = sizeof(startup);
+    startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = null_input == INVALID_HANDLE_VALUE ? GetStdHandle(STD_INPUT_HANDLE) : null_input;
+    startup.hStdOutput = write_pipe;
+    startup.hStdError = write_pipe;
+    PROCESS_INFORMATION process{};
+    std::string command_line = "cmd.exe /D /S /C " + command + " 2>&1";
+    std::vector<char> mutable_command(command_line.begin(), command_line.end());
+    mutable_command.push_back('\0');
+    HANDLE job = CreateJobObjectA(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) ||
+        !CreateProcessA(nullptr, mutable_command.data(), nullptr, nullptr, TRUE,
+                        CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, nullptr, &startup, &process)) {
+        if (job) CloseHandle(job);
+        if (null_input != INVALID_HANDLE_VALUE) CloseHandle(null_input);
+        CloseHandle(read_pipe);
+        CloseHandle(write_pipe);
+        throw std::runtime_error("Cannot start build tool");
+    }
+    CloseHandle(write_pipe);
+    if (null_input != INVALID_HANDLE_VALUE) CloseHandle(null_input);
+    if (!AssignProcessToJobObject(job, process.hProcess)) {
+        TerminateProcess(process.hProcess, 125);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        CloseHandle(read_pipe);
+        CloseHandle(job);
+        throw std::runtime_error("Cannot isolate build process tree");
+    }
+    ResumeThread(process.hThread);
+
+    std::string output;
+    std::array<char, 4096> buffer{};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(120);
+    bool timed_out = false;
+    while (true) {
+        DWORD available = 0;
+        while (PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0) {
+            DWORD read = 0;
+            const DWORD requested = std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
+            if (!ReadFile(read_pipe, buffer.data(), requested, &read, nullptr) || read == 0) break;
+            if (output.size() < 100000) output.append(buffer.data(), read);
+        }
+        if (WaitForSingleObject(process.hProcess, 50) == WAIT_OBJECT_0) break;
+        if (std::chrono::steady_clock::now() >= deadline) {
+            timed_out = true;
+            TerminateJobObject(job, 124);
+            WaitForSingleObject(process.hProcess, 5000);
+            break;
+        }
+    }
+    DWORD available = 0;
+    while (PeekNamedPipe(read_pipe, nullptr, 0, nullptr, &available, nullptr) && available > 0) {
+        DWORD read = 0;
+        const DWORD requested = std::min<DWORD>(available, static_cast<DWORD>(buffer.size()));
+        if (!ReadFile(read_pipe, buffer.data(), requested, &read, nullptr) || read == 0) break;
+        if (output.size() < 100000) output.append(buffer.data(), read);
+    }
+    DWORD native_exit = 125;
+    GetExitCodeProcess(process.hProcess, &native_exit);
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    CloseHandle(read_pipe);
+    CloseHandle(job);
+    if (timed_out) output += "\nCommand timed out after 120 seconds; the process tree was terminated.\n";
+    const int exit_code = timed_out ? 124 : static_cast<int>(native_exit);
+    return {{"command", command}, {"exit_code", exit_code}, {"success", exit_code == 0},
+            {"timed_out", timed_out}, {"output", json_safe_log(std::move(output))}};
 #else
+    const std::string shell_command = "timeout 120s " + command + " 2>&1";
     FILE* pipe = popen(shell_command.c_str(), "r");
-#endif
     if (!pipe) throw std::runtime_error("Cannot start build tool");
     std::string output;
     std::array<char, 4096> buffer{};
     while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe)) {
         if (output.size() < 100000) output += buffer.data();
     }
-#ifdef _WIN32
-    const int exit_code = _pclose(pipe);
-#else
     const int raw = pclose(pipe);
     const int exit_code = WIFEXITED(raw) ? WEXITSTATUS(raw) : raw;
-#endif
     return {{"command", command}, {"exit_code", exit_code}, {"success", exit_code == 0},
-            {"output", json_safe_log(std::move(output))}};
+            {"timed_out", exit_code == 124}, {"output", json_safe_log(std::move(output))}};
+#endif
 }
 
 json DeveloperAgent::run_profile(int run_id, int& sequence, const std::string& profile) {
@@ -233,8 +363,9 @@ json DeveloperAgent::run(int run_id, const std::string& goal) {
     json all_written = json::array();
     json all_tools = json::array();
     json last_plan;
+    json last_review;
     try {
-        for (int round = 1; round <= 5; ++round) {
+        for (int round = 1; round <= 7; ++round) {
             const json current = snapshot();
             database_.add_dev_step(run_id, sequence++, "observe", "completed",
                                    {{"round", round}}, {{"file_count", current["file_count"]}});
@@ -262,14 +393,28 @@ json DeveloperAgent::run(int run_id, const std::string& goal) {
                 }
             }
             if (success) {
+                last_review = ollama_.review_development_result(snapshot(), goal);
+                const bool goal_passed = last_review.value("passed", false);
+                database_.add_dev_step(run_id, sequence++, "review", goal_passed ? "completed" : "failed",
+                                       {{"goal", goal}}, last_review);
+                if (!goal_passed) {
+                    std::ostringstream review_feedback;
+                    review_feedback << "Independent goal review failed: "
+                                    << last_review.value("summary", "requirements are not satisfied") << "\n";
+                    for (const auto& issue : last_review.value("issues", json::array())) {
+                        if (issue.is_string()) review_feedback << "- " << issue.get<std::string>() << "\n";
+                    }
+                    feedback = review_feedback.str();
+                    continue;
+                }
                 json output = {
                     {"success", true}, {"summary", last_plan["summary"]}, {"rounds", round},
                     {"workspace", workspace_.string()}, {"written_files", all_written},
                     {"tool_results", all_tools}, {"completion_criteria", last_plan["completion_criteria"]},
-                    {"provider", last_plan["provider"]}
+                    {"provider", last_plan["provider"]}, {"review", last_review}
                 };
                 database_.add_dev_step(run_id, sequence++, "verify", "completed", json::object(),
-                                       {{"build_and_test_passed", true}});
+                                       {{"build_and_test_passed", true}, {"goal_review_passed", true}});
                 database_.update_dev_run(run_id, "completed", output);
                 return output;
             }
@@ -277,13 +422,14 @@ json DeveloperAgent::run(int run_id, const std::string& goal) {
             if (feedback.empty()) feedback = "模型没有生成可写入文件，请提供完整实现。";
         }
         json output = {
-            {"success", false}, {"summary", "五轮自动修复后构建或测试仍未通过。"},
+            {"success", false}, {"summary", "七轮自动修复后，构建、测试或目标审查仍未通过。"},
+            {"rounds", 7},
             {"workspace", workspace_.string()}, {"written_files", all_written},
             {"tool_results", all_tools}, {"last_feedback", feedback},
-            {"provider", last_plan.value("provider", json::object())}
+            {"provider", last_plan.value("provider", json::object())}, {"review", last_review}
         };
         database_.add_dev_step(run_id, sequence++, "verify", "failed", json::object(),
-                               {{"build_and_test_passed", false}, {"feedback", feedback}});
+                               {{"accepted", false}, {"feedback", feedback}});
         database_.update_dev_run(run_id, "failed", output);
         return output;
     } catch (const std::exception& error) {

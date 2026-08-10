@@ -214,8 +214,8 @@ async function showDevRun(id, poll = false) {
   $('#devRunPanel').classList.remove('hidden');
   $('#devRunGoal').textContent = run.goal;
   $('#devRunId').textContent = `DEV #${run.id}`;
-  $('#devRunStatus').textContent = { queued: '队列等待', running: '自主开发中', completed: '构建测试通过', failed: '开发失败' }[run.status] || run.status;
-  const stageLabels = { observe: '观察代码', plan: '模型规划', write_file: '写入文件', build: '构建', test: '测试', git_diff: '检查差异', verify: '结果验证', error: '异常' };
+  $('#devRunStatus').textContent = { queued: '队列等待', running: '自主开发中', completed: '目标验收通过', failed: '开发失败' }[run.status] || run.status;
+  const stageLabels = { observe: '观察代码', plan: '模型规划', write_file: '写入文件', build: '构建', test: '测试', git_diff: '检查差异', review: '目标审查', verify: '结果验证', error: '异常' };
   $('#devTimeline').innerHTML = (run.steps || []).map(step => {
     const detail = step.output?.path || step.output?.command || step.output?.summary || step.output?.error || '';
     return `<div class="dev-step ${step.status}"><i>${step.status === 'completed' ? 'OK' : '!'}</i><b>${stageLabels[step.stage] || escapeHtml(step.stage)}</b><code>${escapeHtml(detail)}</code><small>${step.status}</small></div>`;
@@ -228,7 +228,7 @@ async function showDevRun(id, poll = false) {
     $('#devResult').innerHTML = `<h4>${output.success ? '自主开发完成' : '自主开发未通过'}</h4>
       <p>${escapeHtml(output.summary || output.error || '运行结束')}</p>
       ${uniqueFiles.length ? `<div class="file-chips">${uniqueFiles.map(file => `<span>${escapeHtml(file)}</span>`).join('')}</div>` : ''}
-      <p>共执行 ${output.rounds || 0} 轮；模型 ${escapeHtml(output.provider?.model || '—')}；构建与测试${output.success ? '全部通过' : '未全部通过'}。</p>
+      <p>共执行 ${output.rounds || 0} 轮；模型 ${escapeHtml(output.provider?.model || '—')}；构建、测试与目标审查${output.success ? '全部通过' : '未全部通过'}。</p>
       ${lastTool?.output ? `<pre class="dev-output">${escapeHtml(lastTool.output)}</pre>` : ''}`;
     if (poll) await loadAgent();
   } else {

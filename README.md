@@ -7,9 +7,9 @@
 ## 核心能力
 
 - 完整业务闭环：项目与任务 CRUD、筛选、看板拖拽、优先级、进度和活动日志
-- 本地大模型 Agent：Ollama + `qwen3:8b` 结构化规划，完整数据留在本机
+- 本地模型 Agent：Ollama `llama3.2:3b` 分别以开发、项目规划和独立验收角色运行；也可切换 `qwen3:8b` 等代码模型，完整数据留在本机
 - 可解释工作流：`Intake → Observe → Plan → Act → Verify` 五阶段全程留痕
-- 自主开发闭环：观察代码 → 生成完整文件 → 编译 → 测试 → 将错误反馈给模型，最多自动修复五轮
+- 自主开发闭环：观察代码 → 生成完整文件 → 编译 → 测试 → 目标审查 → 错误反馈，最多自动修复七轮
 - 分布式执行：API/Worker 角色分离、SQLite WAL 持久化队列、任务租约、超时接管、指数退避与最多三次重试
 - 一致性保护：请求幂等键、任务去重键、白名单工具调用、执行后数据校验
 - 可观测性：节点注册与心跳、队列状态、Agent 步骤留痕、`/metrics` Prometheus 指标
@@ -72,7 +72,8 @@ cmake --build build --parallel
 安装并启动 [Ollama](https://ollama.com/)，准备默认模型：
 
 ```bash
-ollama pull qwen3:8b
+ollama pull llama3.2:3b
+ollama pull qwen3:8b  # 可选：硬件性能充足时用作开发模型
 ollama serve
 ```
 
@@ -128,7 +129,7 @@ Agent 页面的「自主开发 Agent」处理真实代码，不只是生成任�
 4. `test`：执行固定的 `make test`；
 5. `git_diff`：仅在工作区本身是 Git 仓库时执行 `git diff --check`。
 
-构建或测试失败时，真实日志会进入下一轮模型上下文，最多自动修复五轮。所有观察、计划、写文件、命令结果和验证结论分别写入 `dev_runs` 与 `dev_steps`。多个分布式 Worker 会续租长任务，但同一工作区的开发作业严格串行，避免并发覆盖。开发 Agent 必须使用在线 Ollama，不会用规则引擎伪装成代码生成。
+构建或测试失败时，真实日志会进入下一轮模型上下文，最多自动修复七轮。工具层会规范化 Makefile 的注释、Tab、C++ 编译器和语言标准等确定性格式错误；语义仍由模型完成。即使工具返回成功，独立目标审查器仍会重新读取最终源码和测试，防止用 Hello World、空测试或删除原功能伪装完成；审查不通过同样会触发下一轮修复。所有观察、计划、写文件、命令结果、目标审查和验证结论分别写入 `dev_runs` 与 `dev_steps`。多个分布式 Worker 会续租长任务，但同一工作区的开发作业严格串行，避免并发覆盖。开发 Agent 必须使用在线 Ollama，不会用规则引擎伪装成代码生成。
 
 工作区可通过 `ORBITOPS_DEV_WORKSPACE` 或 `--dev-workspace` 修改；建议始终指向专用目录。开发 Agent 会执行模型生成的 C++ 代码和 Makefile，因此生产环境还应在独立的低权限账户或容器中运行 Worker；固定工作区限制的是文件写入路径，不等同于操作系统级隔离。
 
@@ -170,7 +171,8 @@ curl -X POST http://127.0.0.1:8080/api/agent/runs \
 
 - `orbitops_tests`：27 项数据层、两类 Agent、幂等、开发任务串行化、队列租约与节点发现断言。
 - `tests/e2e_test.py`：启动独立 API/Worker 进程，验证 Web、REST、开发 Agent 状态、持久化队列、Agent 执行、集群发现和监控指标，共 14 项断言。
-- `tests/ollama_integration_test.py`：如果本机存在 `qwen3:8b`，启动独立服务并验证真实模型推理、结构化计划、安全工具执行与 Token/耗时指标；没有模型时自动跳过。
+- `tests/ollama_integration_test.py`：如果本机存在配置模型，启动独立服务并验证真实模型推理、结构化计划、安全工具执行与 Token/耗时指标；没有模型时自动跳过。
+- `orbitops_dev_review_test`：向本地模型提供一个“Hello World 冒充计算器”的退化工作区，验证独立目标审查必须拒绝空洞实现；模型不可用时自动跳过。
 
 ## 项目结构
 

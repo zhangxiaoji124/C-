@@ -57,15 +57,16 @@ struct Config {
     orbit::OllamaConfig ollama = {
         env_bool("ORBITOPS_OLLAMA_ENABLED", true),
         env_or("ORBITOPS_OLLAMA_URL", "http://127.0.0.1:11434"),
-        env_or("ORBITOPS_OLLAMA_MODEL", "qwen3:8b"),
-        std::stoi(env_or("ORBITOPS_OLLAMA_TIMEOUT", "240")),
-        env_bool("ORBITOPS_OLLAMA_FALLBACK", true)
+        env_or("ORBITOPS_OLLAMA_MODEL", "llama3.2:3b"),
+        std::stoi(env_or("ORBITOPS_OLLAMA_TIMEOUT", "360")),
+        env_bool("ORBITOPS_OLLAMA_FALLBACK", true),
+        env_or("ORBITOPS_OLLAMA_REVIEW_MODEL", "llama3.2:3b")
     };
     std::string node_id = env_or("COMPUTERNAME", env_or("HOSTNAME", "node")) + "-" + std::to_string(process_id());
 };
 
 void print_help() {
-    std::cout << R"HELP(OrbitOps 1.2.0 - distributed local-AI project operations platform
+    std::cout << R"HELP(OrbitOps 1.2.1 - distributed local-AI project operations platform
 
 Usage: orbitops [options]
   --role <all|api|worker>  Process role (default: all)
@@ -76,7 +77,8 @@ Usage: orbitops [options]
   --node-id <id>           Cluster node identity
   --dev-workspace <path>   Fixed workspace for autonomous development
   --ollama-url <url>       Local Ollama base URL
-  --ollama-model <name>    Ollama model (default: qwen3:8b)
+  --ollama-model <name>    Ollama development model (default: llama3.2:3b)
+  --review-model <name>    Independent review model (default: llama3.2:3b)
   --no-ollama              Disable model inference and use rules
   --ollama-required        Fail workflow instead of rule fallback
   --help                   Show this help
@@ -100,6 +102,7 @@ Config parse_args(int argc, char** argv) {
         else if (arg == "--dev-workspace") config.dev_workspace = next();
         else if (arg == "--ollama-url") config.ollama.base_url = next();
         else if (arg == "--ollama-model") config.ollama.model = next();
+        else if (arg == "--review-model") config.ollama.review_model = next();
         else if (arg == "--no-ollama") config.ollama.enabled = false;
         else if (arg == "--ollama-required") config.ollama.fallback_to_rules = false;
         else if (arg == "--help" || arg == "-h") { print_help(); std::exit(0); }
@@ -145,7 +148,7 @@ int main(int argc, char** argv) {
             const std::string node = config.node_id + "-api";
             while (!stop_requested.load()) {
                 database.heartbeat_node(node, "api", config.host + ":" + std::to_string(config.port),
-                                        {{"version", "1.2.0"}, {"role", config.role},
+                                        {{"version", "1.2.1"}, {"role", config.role},
                                          {"agent_provider", config.ollama.enabled ? "ollama" : "rules"},
                                          {"agent_model", config.ollama.model}});
                 for (int i = 0; i < 50 && !stop_requested.load(); ++i) {

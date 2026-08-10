@@ -58,7 +58,7 @@ SQLite 启用 WAL、外键、5 秒 busy timeout、NORMAL synchronous 和针对�
 
 ## 本地模型规划
 
-`Plan` 阶段通过 Ollama 原生 `/api/chat` 接口调用本地模型，关闭流式传输并传入 JSON Schema。响应包含模型、输入/输出 Token 数和推理耗时，随 Agent 运行结果一同持久化。默认模型为 `qwen3:8b`，可通过环境变量替换。
+`Plan` 阶段通过 Ollama 原生 `/api/chat` 接口调用本地模型，关闭流式传输并传入 JSON Schema。响应包含模型、输入/输出 Token 数和推理耗时，随 Agent 运行结果一同持久化。默认模型为 `llama3.2:3b`，可通过环境变量替换。
 
 当本地模型不可连接、模型不存在或返回内容无法通过校验时，系统默认降级至确定性规则规划器。`--ollama-required` 可用于集成测试和严格生产环境，防止静默降级。
 
@@ -86,7 +86,9 @@ flowchart LR
     Build --> Test["固定测试配置"]
     Build -->|失败日志| Plan
     Test -->|失败日志| Plan
-    Test -->|通过| Done["持久化结果"]
+    Test -->|通过| Review["独立目标审查"]
+    Review -->|不满足原始目标| Plan
+    Review -->|通过| Done["持久化结果"]
 ```
 
 Worker 每 20 秒续租正在运行的长任务，进程崩溃后租约到期即可由其他节点接管。`claim_job` 对 `dev_run` 额外施加数据库级互斥：任一时刻只有一个未过期开发作业可以写共享工作区，而普通项目规划任务仍可由其他 Worker 并行处理。

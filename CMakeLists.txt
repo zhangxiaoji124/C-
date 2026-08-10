@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OrbitOps VERSION 1.2.0 LANGUAGES C CXX)
+project(OrbitOps VERSION 1.2.1 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +34,9 @@ target_link_libraries(orbitops PRIVATE orbit_core)
 
 add_executable(orbitops_tests tests/unit_tests.cpp)
 target_link_libraries(orbitops_tests PRIVATE orbit_core)
+
+add_executable(orbitops_dev_review_test tests/dev_review_integration_test.cpp)
+target_link_libraries(orbitops_dev_review_test PRIVATE orbit_core)
 
 enable_testing()
 add_test(NAME orbitops_unit_tests COMMAND orbitops_tests)
